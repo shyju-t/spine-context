@@ -1,0 +1,28 @@
+node_modules/
+.venv/
+*.log
+.DS_Store
+.env
+.env.local
+*.tsbuildinfo
+
+# Local Kuzu database files (user re-creates via `npm run ingest`)
+# Match anywhere in the tree — npm-script cwd surprises sometimes create
+# stray ones under apps/*/data/.
+**/spine.db/
+**/spine.db-*
+**/spine.db.wal
+**/qontext.db/
+**/qontext.db-*
+
+# Bench dataset (130 MB; download from HuggingFace)
+data/enterprise-bench/
+
+# Cached LLM extractor responses (commit-able if you want re-runs free,
+# but skipped here to keep the repo lean)
+data/cache/
+data/training/
+
+# OS / IDE
+.idea/
+.vscode/

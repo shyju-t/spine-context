@@ -1,0 +1,13 @@
+{
+  "name": "@spine/graph",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@spine/schema": "*",
+    "kuzu": "^0.6.0"
+  }
+}

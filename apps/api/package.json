@@ -1,0 +1,28 @@
+{
+  "name": "@spine/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ingest": "tsx src/ingest.ts",
+    "resolver-test": "tsx src/resolver-test.ts",
+    "extract": "node --env-file-if-exists=../../.env.local --import=tsx src/extract.ts",
+    "export-training": "tsx src/export-training.ts",
+    "mcp": "tsx src/mcp.ts",
+    "mcp-http-test": "tsx src/mcp-http-test.ts",
+    "query-test": "tsx src/query-test.ts",
+    "server": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@spine/adapters": "*",
+    "@spine/cache": "*",
+    "@spine/extractor": "*",
+    "@spine/graph": "*",
+    "@spine/resolver": "*",
+    "@spine/schema": "*",
+    "hono": "^4.6.0",
+    "zod": "^3.23.0"
+  }
+}
