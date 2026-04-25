@@ -24,7 +24,7 @@
  *   npm run -w @spine/api export-training -- --cache data/cache/extractor --out data/training
  */
 import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   SPINE_SCHEMA,
   SCHEMA_ENTITY_TYPES,
@@ -134,8 +134,23 @@ async function* walkCache(
       `Cannot read cache dir ${cacheDir}: ${(err as Error).message}`,
     );
   }
+  // Cache layout we wrote: `<cacheDir>/<2-char-shard>/<rest-of-hex-hash>/`.
+  // Defense-in-depth — even though entries come from our own readdir,
+  // we sanitize against path-traversal: shard/entry names must be safe
+  // identifier-shaped, and the resolved dir must stay inside shardPath.
+  // (Reported by Aikido as CWE-22 path-traversal.)
+  const SAFE_NAME = /^[A-Za-z0-9_.-]+$/;
+  const cacheDirAbs = resolve(cacheDir);
+
   for (const shard of shards) {
+    if (!SAFE_NAME.test(shard) || shard === "..") continue;
     const shardPath = join(cacheDir, shard);
+    const shardPathAbs = resolve(shardPath);
+    // Shard must remain inside cacheDir.
+    {
+      const rel = relative(cacheDirAbs, shardPathAbs);
+      if (rel.startsWith("..") || isAbsolute(rel)) continue;
+    }
     let entries: string[];
     try {
       entries = await readdir(shardPath);
@@ -143,7 +158,12 @@ async function* walkCache(
       continue; // not a directory
     }
     for (const e of entries) {
+      if (!SAFE_NAME.test(e) || e === "..") continue;
       const dir = join(shardPath, e);
+      const dirAbs = resolve(dir);
+      // Entry dir must remain inside shardPath.
+      const rel = relative(shardPathAbs, dirAbs);
+      if (rel.startsWith("..") || isAbsolute(rel)) continue;
       yield {
         inputPath: join(dir, "input.json"),
         outputPath: join(dir, "output.json"),
