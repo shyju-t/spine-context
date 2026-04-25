@@ -10,8 +10,8 @@
     "@spine/cache": "*",
     "@spine/resolver": "*",
     "@spine/schema": "*",
-    "@ai-sdk/google": "^1.0.0",
-    "ai": "^4.0.0",
+    "@ai-sdk/google": "^2.0.0",
+    "ai": "^5.0.52",
     "zod": "^3.23.0"
   }
 }
