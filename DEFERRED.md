@@ -262,6 +262,49 @@ which means:
 
 ---
 
+## 9. Extractor prompt v2 is too restrictive on smaller models
+
+**Status**: shipped to repo, never run at scale
+**Trigger to revive**: morning quota reset → re-extract OR Pioneer fine-tuning lands
+
+### Symptom
+
+The v2 prompt (`extractor-v2`) was designed to fix bugs we saw in v1: prefix
+violations, role mis-attribution, prose-as-label values. It includes hard
+rules with negative framing ("WRONG: don't do X") and an example with a
+"NOTE THIS EXAMPLE OMITS:" section.
+
+When we couldn't re-test on `gemini-2.5-flash` (daily RPD exhausted), we
+fell back to other models:
+
+| Model | v1 prompt facts/source | v2 prompt facts/source |
+|---|---|---|
+| gemini-2.5-flash | 12 | (untested due to quota) |
+| gemini-2.5-flash-lite | 6 | 0 |
+| gemini-3-flash-preview | (untested) | 0 |
+| gemini-3.1-flash-lite-preview | (untested) | 0 |
+
+Every smaller / preview model produced **0 facts** on the same source where
+v1+flash produced 12. The "OMIT" framing dominates their behavior.
+
+### Fix path
+
+Three refinements likely needed:
+
+1. **Reframe rules positively**: replace "WRONG: don't do X / RIGHT: do Y"
+   with "When you see X, emit Y" — single positive instruction.
+2. **Drop the explicit OMIT note** at the end of the example. Smaller
+   models latch onto it.
+3. **Add a positive abundance hint**: "If the source describes 5 actions,
+   emit 5 action facts. Don't artificially trim."
+
+The schema regex on `proposed_id` is good guardrail and stays.
+
+When `gemini-2.5-flash` quota refills, re-test on the same hero source and
+verify ≥10 facts. Only then do a full 700-source re-extract.
+
+---
+
 ## Format convention
 
 Each deferred item:
