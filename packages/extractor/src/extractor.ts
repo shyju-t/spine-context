@@ -3,6 +3,7 @@ import { google } from "@ai-sdk/google";
 import { FileCache } from "@spine/cache";
 import type { LocalResolver } from "@spine/resolver";
 import type { SourceRecord } from "@spine/schema";
+import { callPioneer } from "./pioneer-client.js";
 import {
   PROMPT_VERSION,
   SYSTEM_PROMPT,
@@ -17,10 +18,27 @@ import {
 export interface ExtractorOptions {
   resolver: LocalResolver;
   cache: FileCache<ExtractorOutput>;
-  /** Gemini model id, e.g. "gemini-2.0-flash". */
+  /**
+   * Model id. Two backends are dispatched on the prefix:
+   *   - "gemini-..."  → Gemini via Vercel AI SDK (prompt-based extraction)
+   *   - "pioneer/..." → Pioneer GLiNER2 (schema-based, no prompt)
+   * Default: gemini-2.5-flash.
+   */
   model?: string;
   /** Override prompt version for cache busting (defaults to PROMPT_VERSION). */
   promptVersion?: string;
+  /** Pioneer API key. Falls back to PIONEER_API_KEY env. Required for pioneer/* models. */
+  pioneerApiKey?: string;
+  /** Override Pioneer base URL (tests/mocks). */
+  pioneerBaseUrl?: string;
+}
+
+/**
+ * Backend dispatch based on the model id prefix.
+ * `pioneer/anything` → Pioneer; otherwise → Gemini.
+ */
+function backendFor(model: string): "pioneer" | "gemini" {
+  return model.startsWith("pioneer/") ? "pioneer" : "gemini";
 }
 
 export interface ExtractRequest {
@@ -101,13 +119,7 @@ export class Extractor {
       return { output: cached, mentions, cache_hit: true, llm_ms: 0 };
     }
 
-    // 3. LLM call
-    const userPrompt = buildUserPrompt({
-      source: req.source,
-      mentions: mentions as PreResolvedMention[],
-      entity_labels,
-    });
-
+    // 3. LLM call — dispatch to Gemini or Pioneer depending on model id.
     const t0 = performance.now();
     let output: ExtractorOutput;
     let usage: {
@@ -116,26 +128,56 @@ export class Extractor {
       totalTokens?: number;
     } = {};
     try {
-      const result = await generateObject({
-        model: google(this.model),
-        schema: ExtractorOutputSchema,
-        system: SYSTEM_PROMPT,
-        prompt: userPrompt,
-        temperature: 0,
-        providerOptions: {
-          google: {
-            // Disable Gemini 2.5's thinking-mode for extraction work —
-            // we want fast structured output, not internal reasoning.
-            // thinkingBudget=0 turns it off; we can dial up if quality drops.
-            thinkingConfig: {
-              thinkingBudget: 0,
-              includeThoughts: false,
+      if (backendFor(this.model) === "pioneer") {
+        // Pioneer GLiNER2 path — schema-driven, no prompt. The model id
+        // we send Pioneer is the slug after "pioneer/", so callers say
+        // `--model pioneer/fastino/gliner2-multi-large-v1` and we forward
+        // `fastino/gliner2-multi-large-v1` to the API.
+        const apiKey =
+          this.opts.pioneerApiKey ?? process.env.PIONEER_API_KEY ?? "";
+        if (!apiKey) {
+          throw new Error(
+            "Pioneer model selected but PIONEER_API_KEY is not set " +
+              "(pass via constructor or env). Use a gemini-* model to use the Gemini backend.",
+          );
+        }
+        const pioneerModel = this.model.slice("pioneer/".length);
+        const result = await callPioneer({
+          apiKey,
+          model: pioneerModel,
+          source: req.source,
+          resolver: this.opts.resolver,
+          baseUrl: this.opts.pioneerBaseUrl,
+        });
+        output = result.output;
+      } else {
+        // Gemini path — existing prompt-based extraction.
+        const userPrompt = buildUserPrompt({
+          source: req.source,
+          mentions: mentions as PreResolvedMention[],
+          entity_labels,
+        });
+        const result = await generateObject({
+          model: google(this.model),
+          schema: ExtractorOutputSchema,
+          system: SYSTEM_PROMPT,
+          prompt: userPrompt,
+          temperature: 0,
+          providerOptions: {
+            google: {
+              // Disable Gemini 2.5's thinking-mode for extraction work —
+              // we want fast structured output, not internal reasoning.
+              // thinkingBudget=0 turns it off; we can dial up if quality drops.
+              thinkingConfig: {
+                thinkingBudget: 0,
+                includeThoughts: false,
+              },
             },
           },
-        },
-      });
-      output = result.object;
-      usage = result.usage as typeof usage;
+        });
+        output = result.object;
+        usage = result.usage as typeof usage;
+      }
     } catch (err) {
       this.stats.errors += 1;
       throw err;
@@ -143,7 +185,8 @@ export class Extractor {
     const llm_ms = performance.now() - t0;
     if (process.env.SPINE_LOG_USAGE === "1") {
       console.log(
-        `[extractor] ${req.source.id}: ${llm_ms.toFixed(0)}ms, ` +
+        `[extractor] ${req.source.id}: ${llm_ms.toFixed(0)}ms ` +
+          `(${backendFor(this.model)}), ` +
           `prompt=${usage.promptTokens ?? "?"}, completion=${usage.completionTokens ?? "?"}, total=${usage.totalTokens ?? "?"}`,
       );
     }
