@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { SourceAdapter, SourceRecord } from "@spine/schema";
+import { safeReadFile } from "./safe-fs.js";
 
 /**
  * Email adapter — EnterpriseBench Enterprise_mail_system/emails.json.
@@ -37,7 +37,7 @@ export const enterpriseBenchEmailAdapter: SourceAdapter<EnterpriseBenchRawEmail>
   type: "email",
 
   async *discover(location: string): AsyncIterable<EnterpriseBenchRawEmail> {
-    const text = await readFile(location, "utf8");
+    const text = await safeReadFile(location);
     const data = JSON.parse(text);
     if (!Array.isArray(data)) {
       throw new Error(

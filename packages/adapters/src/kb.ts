@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { SourceAdapter, SourceRecord } from "@spine/schema";
+import { safeReadFile } from "./safe-fs.js";
 
 /**
  * KB adapter — EnterpriseBench Inazuma_Overflow/overflow.json.
@@ -40,7 +40,7 @@ export const inazumaOverflowAdapter: SourceAdapter<RawOverflowPost> = {
   type: "kb",
 
   async *discover(location: string): AsyncIterable<RawOverflowPost> {
-    const text = await readFile(location, "utf8");
+    const text = await safeReadFile(location);
     const data = JSON.parse(text);
     if (!Array.isArray(data)) {
       throw new Error(`[kb] expected JSON array in ${location}`);

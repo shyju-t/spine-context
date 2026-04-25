@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type {
   Client,
@@ -6,6 +5,7 @@ import type {
   Product,
   Vendor,
 } from "@spine/schema";
+import { safeReadFile } from "./safe-fs.js";
 
 /**
  * Registry loaders for canonical entities that aren't really "sources" of
@@ -32,7 +32,7 @@ const RawCustomerSchema = z
   .passthrough();
 
 export async function loadCustomers(path: string): Promise<Customer[]> {
-  const text = await readFile(path, "utf8");
+  const text = await safeReadFile(path);
   const data = JSON.parse(text);
   if (!Array.isArray(data)) throw new Error(`[customers] expected array`);
 
@@ -67,7 +67,7 @@ const RawProductSchema = z
   .passthrough();
 
 export async function loadProducts(path: string): Promise<Product[]> {
-  const text = await readFile(path, "utf8");
+  const text = await safeReadFile(path);
   const data = JSON.parse(text);
   if (!Array.isArray(data)) throw new Error(`[products] expected array`);
 
@@ -104,7 +104,7 @@ const RawClientSchema = z
   .passthrough();
 
 export async function loadClients(path: string): Promise<Client[]> {
-  const text = await readFile(path, "utf8");
+  const text = await safeReadFile(path);
   const data = JSON.parse(text);
   if (!Array.isArray(data)) throw new Error(`[clients] expected array`);
 
@@ -144,7 +144,7 @@ const RawVendorSchema = z
   .passthrough();
 
 export async function loadVendors(path: string): Promise<Vendor[]> {
-  const text = await readFile(path, "utf8");
+  const text = await safeReadFile(path);
   const data = JSON.parse(text);
   if (!Array.isArray(data)) throw new Error(`[vendors] expected array`);
 

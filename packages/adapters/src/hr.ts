@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import {
   type Fact,
@@ -7,6 +6,7 @@ import {
   type SourceRecord,
   makeFact,
 } from "@spine/schema";
+import { safeReadFile } from "./safe-fs.js";
 
 /**
  * HR adapter — reads EnterpriseBench
@@ -50,7 +50,7 @@ export const hrAdapter: SourceAdapter<RawEmployee> = {
   type: "hr",
 
   async *discover(location: string): AsyncIterable<RawEmployee> {
-    const text = await readFile(location, "utf8");
+    const text = await safeReadFile(location);
     const data = JSON.parse(text);
     if (!Array.isArray(data)) {
       throw new Error(`[hr] expected JSON array in ${location}`);
