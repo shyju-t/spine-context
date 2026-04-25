@@ -25,6 +25,47 @@ import {
 const TextContent = (text: string) =>
   ({ type: "text" as const, text }) satisfies { type: "text"; text: string };
 
+/**
+ * Spine ACL tokens are namespaced (`role:exec`, `employee:all`, `person:emp_X`).
+ * MCP clients (Claude Desktop, etc) often pass the bare role name — `"exec"`,
+ * `"hr"` — because that's how a human would describe themselves. We accept
+ * both forms here so the demo doesn't flunk on a syntactic mismatch.
+ *
+ * The canonical form is preserved when callers already namespace; aliasing
+ * only kicks in for known bare names.
+ */
+function normalizeRoles(input: string[] | undefined): string[] {
+  const raw = input && input.length > 0 ? input : ["employee:all"];
+  const out = new Set<string>();
+  for (const r of raw) {
+    const t = r.trim();
+    if (!t) continue;
+    if (t.includes(":")) {
+      out.add(t);
+      continue;
+    }
+    const lower = t.toLowerCase();
+    if (lower === "employee" || lower === "all" || lower === "everyone") {
+      out.add("employee:all");
+      continue;
+    }
+    // Bare role name → role:<name>. Covers "exec", "hr", "cs", "engineer", etc.
+    out.add(`role:${lower}`);
+  }
+  return [...out];
+}
+
+const AS_ROLE_DESC =
+  "Role tags the caller can claim. A fact is visible only if its ACL " +
+  "intersects this list. Pass an array of strings using these forms: " +
+  "'employee:all' (default — broadly visible facts), " +
+  "'role:exec' (executive view), " +
+  "'role:hr' (HR-only fields like salary, performance), " +
+  "'role:cs' (customer-success view), " +
+  "'person:emp_<id>' (self-scoped). " +
+  "Bare names like 'exec' or 'hr' are also accepted and auto-prefixed to 'role:exec'/'role:hr'. " +
+  "Examples: ['role:exec'], ['role:hr', 'person:emp_0040'], ['employee:all'].";
+
 export function registerSpineTools(server: McpServer, graph: Graph): void {
   server.tool(
     "query_entity",
@@ -34,16 +75,11 @@ export function registerSpineTools(server: McpServer, graph: Graph): void {
         .describe(
           "Entity name or ID. Examples: 'Raj Patel', 'person/emp_0431', 'Acme Corp', 'topic/q2_launch'.",
         ),
-      as_role: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Role tags the caller can claim. Each fact's ACL must intersect for visibility. Default: ['employee:all'].",
-        ),
+      as_role: z.array(z.string()).optional().describe(AS_ROLE_DESC),
       sources_limit: z.number().int().optional(),
     },
     async ({ entity, as_role, sources_limit }) => {
-      const ctx = { roles: as_role ?? ["employee:all"] };
+      const ctx = { roles: normalizeRoles(as_role) };
       const resolved = await findEntityByQuery(graph, entity);
       if (!resolved) {
         return {
@@ -94,11 +130,11 @@ export function registerSpineTools(server: McpServer, graph: Graph): void {
         .describe(
           "Free-form query. Tries entity match first; falls back to full-text search over Source content.",
         ),
-      as_role: z.array(z.string()).optional(),
+      as_role: z.array(z.string()).optional().describe(AS_ROLE_DESC),
       limit: z.number().int().optional(),
     },
     async ({ query, as_role, limit }) => {
-      const ctx = { roles: as_role ?? ["employee:all"] };
+      const ctx = { roles: normalizeRoles(as_role) };
       const lim = limit ?? 10;
 
       const entity = await findEntityByQuery(graph, query);
@@ -156,10 +192,10 @@ export function registerSpineTools(server: McpServer, graph: Graph): void {
       source_id: z
         .string()
         .describe("Source ID, e.g. 'email/4226322d-...' or 'kb/9'."),
-      as_role: z.array(z.string()).optional(),
+      as_role: z.array(z.string()).optional().describe(AS_ROLE_DESC),
     },
     async ({ source_id, as_role }) => {
-      const ctx = { roles: as_role ?? ["employee:all"] };
+      const ctx = { roles: normalizeRoles(as_role) };
       const result = await getSourceById(graph, source_id, ctx);
       if (!result.source) {
         return {
