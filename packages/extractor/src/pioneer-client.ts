@@ -341,6 +341,13 @@ export function pioneerToExtractorOutput(
         value = obj.id;
       }
 
+      // Drop self-relations (subject === object). GLiNER2 occasionally
+      // emits these — e.g. (Bob, assigned_to, Bob) — and they're always
+      // noise: there's no fact value being added by saying X relates to X.
+      // (Literal-tail relations are exempt; "X due_on Y" can never have
+      //  X==Y since the tail is a date string, not an entity_id.)
+      if (!isLiteralTail && subj.id === value) continue;
+
       // Dedup the same (entity, attribute, value) emitted multiple times
       // (GLiNER2 sometimes outputs symmetric pairs like blocks + blocked_by
       // for the same edge — we want one fact each, not duplicates).
