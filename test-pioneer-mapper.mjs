@@ -32,43 +32,58 @@ const stubResolver = {
   size() { return { entities: 2, surface_forms: 2 }; },
 };
 
+// Real GLiNER2 shape: type-keyed object for entities, separate
+// relation_extraction object also type-keyed, head/tail with text+span.
 const fakeRaw = {
-  entities: [
-    { type: "project", text: "Phoenix Migration", span: [10, 28], confidence: 0.91 },
-    { type: "commitment", text: "draft contract by Friday", span: [50, 73], confidence: 0.84 },
-    { type: "topic", text: "Q3 Budget Review", span: [100, 116], confidence: 0.78 },
-    { type: "person", text: "Alice Chen", span: [200, 210], confidence: 0.99 },
-    { type: "customer", text: "Acme Corp", span: [220, 229], confidence: 0.97 },
-    // mistyped — GLiNER2 calls Alice a customer; we should drop this fact later
-    { type: "customer", text: "Alice Chen", span: [200, 210], confidence: 0.4 },
-  ],
-  relations: [
-    {
-      type: "owns",
-      subject: { type: "project", text: "Phoenix Migration" },
-      object: { type: "person", text: "Alice Chen" },
-      confidence: 0.85,
-    },
-    {
-      type: "manages",
-      subject: { type: "person", text: "Alice Chen" },
-      object: { type: "person", text: "Random Stranger Not In Resolver" },
-      confidence: 0.7,
-    },
-    {
-      type: "blocked_by",
-      subject: { type: "project", text: "Phoenix Migration" },
-      object: { type: "topic", text: "Q3 Budget Review" },
-      confidence: 0.62,
-    },
-    {
-      // Unknown relation type — should be dropped.
-      type: "smells_like",
-      subject: { type: "person", text: "Alice Chen" },
-      object: { type: "customer", text: "Acme Corp" },
-      confidence: 0.9,
-    },
-  ],
+  entities: {
+    project: [
+      { text: "Phoenix Migration", start: 10, end: 28, confidence: 0.91 },
+    ],
+    commitment: [
+      { text: "draft contract by Friday", start: 50, end: 73, confidence: 0.84 },
+    ],
+    topic: [{ text: "Q3 Budget Review", start: 100, end: 116, confidence: 0.78 }],
+    person: [
+      { text: "Alice Chen", start: 200, end: 210, confidence: 0.99 },
+      // GLiNER2 sometimes also tags Alice (mistakenly) as customer below.
+    ],
+    customer: [
+      { text: "Acme Corp", start: 220, end: 229, confidence: 0.97 },
+      // Same span tagged as both customer (high) and below — should keep customer.
+      { text: "Alice Chen", start: 200, end: 210, confidence: 0.4 },
+    ],
+  },
+  relation_extraction: {
+    owns: [
+      {
+        head: { text: "Phoenix Migration", start: 10, end: 28 },
+        tail: { text: "Alice Chen", start: 200, end: 210 },
+        confidence: 0.85,
+      },
+    ],
+    manages: [
+      {
+        head: { text: "Alice Chen", start: 200, end: 210 },
+        tail: { text: "Random Stranger Not In Resolver" },
+        confidence: 0.7,
+      },
+    ],
+    blocked_by: [
+      {
+        head: { text: "Phoenix Migration", start: 10, end: 28 },
+        tail: { text: "Q3 Budget Review", start: 100, end: 116 },
+        confidence: 0.62,
+      },
+    ],
+    // Unknown relation type — should be dropped.
+    smells_like: [
+      {
+        head: { text: "Alice Chen", start: 200, end: 210 },
+        tail: { text: "Acme Corp", start: 220, end: 229 },
+        confidence: 0.9,
+      },
+    ],
+  },
 };
 
 const fakeSource = {

@@ -25,38 +25,41 @@ import type {
 } from "./types.js";
 
 // ──────────────────────── Wire types ────────────────────────
+//
+// Pioneer's GLiNER2 wraps the structured payload as a JSON string inside
+// the OpenAI chat-completions envelope (choices[0].message.content). The
+// structured payload itself uses object-keyed-by-type for entities and
+// relations rather than a flat tagged array — flattening happens in the
+// mapper below so the rest of the pipeline doesn't have to know.
+//
+// Example shape (abridged):
+//   {
+//     "entities": {
+//       "person":  [{"text": "Alice", "start": 3, "end": 8, "confidence": 0.99}],
+//       "project": [{"text": "Phoenix", "start": 30, "end": 55, "confidence": 0.97}]
+//     },
+//     "relation_extraction": {
+//       "owns":   [{"head": {"text": "Bob", "start": ...}, "tail": {"text": "schema", "start": ...}}],
+//       "due_on": [...]
+//     }
+//   }
 
-/**
- * GLiNER2 entity span as returned by Pioneer.
- *
- * `text` is the surface form; `span` is the [start, end) char offset into
- * the input text when `include_spans=true`. `confidence` is 0..1 when
- * `include_confidence=true`.
- */
-interface GLiNER2Entity {
-  type: string;
+interface GLiNER2Span {
   text: string;
-  span?: [number, number];
+  start?: number;
+  end?: number;
   confidence?: number;
 }
 
-interface GLiNER2RelationParticipant {
-  type: string;
-  text: string;
-  span?: [number, number];
-}
-
 interface GLiNER2Relation {
-  type: string;
-  subject: GLiNER2RelationParticipant;
-  object: GLiNER2RelationParticipant;
-  span?: [number, number];
+  head: GLiNER2Span;
+  tail: GLiNER2Span;
   confidence?: number;
 }
 
 interface GLiNER2Output {
-  entities?: GLiNER2Entity[];
-  relations?: GLiNER2Relation[];
+  entities?: Record<string, GLiNER2Span[]>;
+  relation_extraction?: Record<string, GLiNER2Relation[]>;
 }
 
 interface ChatCompletionsResponse {
@@ -142,6 +145,17 @@ const RELATION_TO_ATTRIBUTE: Record<RuntimeRelation, string> = {
  */
 const STATIC_RELATIONS = new Set<RuntimeRelation>(["manages", "reports_to"]);
 
+/**
+ * Relations whose tail is a literal string (typically a date), not an
+ * entity reference. We store the tail.text verbatim as the fact value
+ * instead of trying to resolve it to an entity_id.
+ *
+ * GLiNER2 doesn't have a built-in "date" entity type in our schema, so
+ * the tail text stays as-is — downstream conflict detection and timeline
+ * code already handles raw date strings (DOJ, deadline, etc).
+ */
+const LITERAL_TAIL_RELATIONS = new Set<RuntimeRelation>(["due_on"]);
+
 function slugify(s: string): string {
   return s
     .toLowerCase()
@@ -178,109 +192,178 @@ function buildSurfaceIndex(
 }
 
 /**
+ * Confidence threshold for accepting an entity-type assignment when the
+ * same span is tagged with multiple types (a common GLiNER2 quirk —
+ * "Acme Corp" comes back as both customer:0.94 and client:0.54). We
+ * keep the highest-confidence one and drop the others.
+ */
+const MIN_TYPE_CONFIDENCE = 0.55;
+
+/**
  * Convert GLiNER2's response into Spine's `ExtractorOutput`.
  *
- * - Detected `topic/project/decision/commitment` spans become `new_entities`
- *   (one per distinct surface text), with proposed_id `<type>/<slug>`.
- * - Detected `person/customer/client/vendor/product` spans get resolved
- *   against the LocalResolver. If they don't resolve, they're dropped —
- *   we don't invent registry entries from text alone.
- * - Each relation becomes one Fact on the subject entity.
- *
- * Entities the extractor sees but doesn't issue a fact for are still
- * useful (they get reflected as Mentions edges by the ingest pipeline,
- * which uses our resolver pre-pass independently).
+ * Pipeline:
+ *  1. Flatten the type-keyed `entities` object into a single span list
+ *     where each span has its strongest type (resolves overlap noise).
+ *  2. New-style entities (topic/project/decision/commitment) become
+ *     `new_entities` with `proposed_id = <type>/<slug>`.
+ *  3. Registry-style entities (person/customer/...) get resolved against
+ *     the LocalResolver to canonical IDs. Unresolved registry spans
+ *     are dropped — we don't invent registry entries from text alone.
+ *  4. Each `relation_extraction[<rel>]` triple → one Fact on the head
+ *     entity. Both head and tail have their entity types looked up by
+ *     text against the flattened entity map; relations whose head or
+ *     tail can't be typed/resolved are dropped.
  */
 export function pioneerToExtractorOutput(
   raw: GLiNER2Output,
   source: SourceRecord,
   resolver: LocalResolver,
 ): ExtractorOutput {
-  const detectedEntities = raw.entities ?? [];
-  const detectedRelations = raw.relations ?? [];
+  const entitiesByType = raw.entities ?? {};
+  const relationsByType = raw.relation_extraction ?? {};
+
+  // Pass 0 — flatten entity object-of-arrays into "for each text, pick
+  // the highest-confidence type assignment". GLiNER2 sometimes assigns
+  // the same span to several types (customer + client for "Acme Corp");
+  // we keep one winner per text, breaking ties by confidence.
+  type Tagged = { type: string; conf: number; start?: number; end?: number };
+  const bestTypeByText = new Map<string, Tagged>();
+  for (const [type, spans] of Object.entries(entitiesByType)) {
+    const t = type.toLowerCase();
+    if (!NEW_ENTITY_TYPES.has(t) && !REGISTRY_ENTITY_TYPES.has(t)) continue;
+    for (const sp of spans ?? []) {
+      const conf = sp.confidence ?? 0;
+      if (conf < MIN_TYPE_CONFIDENCE) continue;
+      const prev = bestTypeByText.get(sp.text);
+      if (!prev || prev.conf < conf) {
+        bestTypeByText.set(sp.text, {
+          type: t,
+          conf,
+          start: sp.start,
+          end: sp.end,
+        });
+      }
+    }
+  }
 
   const surfaceIndex = buildSurfaceIndex(resolver, source.content);
 
-  // Pass 1 — register proposed_ids for new-style entities. Keyed by the
-  // exact surface text so the relation pass can rebind to the same ID
-  // (we don't slugify twice).
+  // Pass 1 — register proposed_ids for new-style entities.
   const new_entities: NewEntity[] = [];
   const proposedByText = new Map<string, string>();
   const seenProposed = new Set<string>();
-  for (const ent of detectedEntities) {
-    const t = ent.type.toLowerCase();
-    if (!NEW_ENTITY_TYPES.has(t)) continue;
-    const slug = slugify(ent.text);
+  for (const [text, tagged] of bestTypeByText) {
+    if (!NEW_ENTITY_TYPES.has(tagged.type)) continue;
+    const slug = slugify(text);
     if (!slug) continue;
-    const proposedId = `${t}/${slug}`;
+    const proposedId = `${tagged.type}/${slug}`;
     if (seenProposed.has(proposedId)) continue;
     seenProposed.add(proposedId);
-    proposedByText.set(ent.text, proposedId);
+    proposedByText.set(text, proposedId);
     new_entities.push({
-      type: capitalize(t) as NewEntity["type"],
+      type: capitalize(tagged.type) as NewEntity["type"],
       proposed_id: proposedId,
-      name: ent.text.slice(0, 120),
+      name: text.slice(0, 120),
       aliases: [],
     });
   }
 
-  // Resolve any entity span (registry or new) to a canonical or proposed ID.
-  const resolveEntity = (
+  /**
+   * Resolve a relation participant (which only carries `text`) to a
+   * canonical or proposed entity_id. We:
+   *  1. Look up the text's strongest type from bestTypeByText.
+   *  2. For new-style types, return the proposed_id (registering it if
+   *     somehow we missed it in pass 1).
+   *  3. For registry types, pass through the LocalResolver and verify
+   *     the canonical-entity type matches what GLiNER2 said.
+   */
+  const resolveParticipant = (
     text: string,
-    type: string,
   ): { id: string; type: string } | null => {
-    const t = type.toLowerCase();
+    const tagged = bestTypeByText.get(text);
+    if (!tagged) return null;
+    const t = tagged.type;
+
     if (NEW_ENTITY_TYPES.has(t)) {
-      const id = proposedByText.get(text);
-      if (id) return { id, type: t };
-      // Span seen as a relation participant but not in the entities list?
-      // Slugify on the fly and add it (defensive — happens with messy outputs).
-      const slug = slugify(text);
-      if (!slug) return null;
-      const proposedId = `${t}/${slug}`;
-      if (!seenProposed.has(proposedId)) {
-        seenProposed.add(proposedId);
-        proposedByText.set(text, proposedId);
-        new_entities.push({
-          type: capitalize(t) as NewEntity["type"],
-          proposed_id: proposedId,
-          name: text.slice(0, 120),
-          aliases: [],
-        });
+      let id = proposedByText.get(text);
+      if (!id) {
+        const slug = slugify(text);
+        if (!slug) return null;
+        id = `${t}/${slug}`;
+        if (!seenProposed.has(id)) {
+          seenProposed.add(id);
+          proposedByText.set(text, id);
+          new_entities.push({
+            type: capitalize(t) as NewEntity["type"],
+            proposed_id: id,
+            name: text.slice(0, 120),
+            aliases: [],
+          });
+        }
       }
-      return { id: proposedId, type: t };
+      return { id, type: t };
     }
+
     if (REGISTRY_ENTITY_TYPES.has(t)) {
       const hit = surfaceIndex.get(text.toLowerCase());
       if (!hit) return null;
-      // Sanity: only accept the resolver mapping when the type lines up.
-      // Otherwise GLiNER2 mis-typed the span (e.g. customer name flagged
-      // as person), and we'd write a fact about the wrong entity_id.
       if (hit.type !== t) return null;
       return hit;
     }
+
     return null;
   };
 
   // Pass 2 — relations become facts.
   const facts: ExtractedFact[] = [];
-  for (const rel of detectedRelations) {
-    const relType = rel.type.toLowerCase() as RuntimeRelation;
-    if (!RELATION_TO_ATTRIBUTE[relType]) continue;
-    const subj = resolveEntity(rel.subject.text, rel.subject.type);
-    const obj = resolveEntity(rel.object.text, rel.object.type);
-    if (!subj || !obj) continue;
+  const seenFactKey = new Set<string>();
+  for (const [relType, triples] of Object.entries(relationsByType)) {
+    const rt = relType.toLowerCase() as RuntimeRelation;
+    if (!RELATION_TO_ATTRIBUTE[rt]) continue;
+    const isLiteralTail = LITERAL_TAIL_RELATIONS.has(rt);
+    for (const triple of triples ?? []) {
+      const headText = triple.head?.text;
+      const tailText = triple.tail?.text;
+      if (!headText || !tailText) continue;
 
-    const span = rel.span ?? null;
-    facts.push({
-      entity_id: subj.id,
-      attribute: RELATION_TO_ATTRIBUTE[relType],
-      value: obj.id,
-      fact_type: STATIC_RELATIONS.has(relType) ? "static" : "trajectory",
-      confidence: rel.confidence ?? 0.7,
-      source_span_start: span ? span[0] : null,
-      source_span_end: span ? span[1] : null,
-    });
+      const subj = resolveParticipant(headText);
+      if (!subj) continue;
+
+      let value: string;
+      if (isLiteralTail) {
+        // due_on: the tail is a date/time literal ("Friday", "by Q3"),
+        // not an entity. Store the tail text verbatim as the fact value.
+        value = tailText.slice(0, 200);
+      } else {
+        const obj = resolveParticipant(tailText);
+        if (!obj) continue;
+        value = obj.id;
+      }
+
+      // Dedup the same (entity, attribute, value) emitted multiple times
+      // (GLiNER2 sometimes outputs symmetric pairs like blocks + blocked_by
+      // for the same edge — we want one fact each, not duplicates).
+      const attribute = RELATION_TO_ATTRIBUTE[rt];
+      const key = `${subj.id}::${attribute}::${value}`;
+      if (seenFactKey.has(key)) continue;
+      seenFactKey.add(key);
+
+      // Use the head-span's offsets as fact provenance — it's the closest
+      // anchor we have to "where in the source did this fact come from".
+      const headStart = triple.head.start ?? null;
+      const headEnd = triple.head.end ?? null;
+
+      facts.push({
+        entity_id: subj.id,
+        attribute,
+        value,
+        fact_type: STATIC_RELATIONS.has(rt) ? "static" : "trajectory",
+        confidence: triple.confidence ?? 0.7,
+        source_span_start: headStart,
+        source_span_end: headEnd,
+      });
+    }
   }
 
   return { new_entities, facts };
