@@ -6,6 +6,7 @@ import {
   type SourceLite,
 } from "../api";
 import { CurrentState } from "./CurrentState";
+import { EntityGraph } from "./EntityGraph";
 import { FactRow } from "./FactRow";
 import { Timeline } from "./Timeline";
 
@@ -28,9 +29,11 @@ interface Props {
   query: string;
   roles: string[];
   onSourceClick: (id: string, highlight?: [number, number]) => void;
+  /** Navigate to a different entity (used by EntityGraph node clicks). */
+  onNavigate?: (entityId: string) => void;
 }
 
-export function EntityPage({ query, roles, onSourceClick }: Props) {
+export function EntityPage({ query, roles, onSourceClick, onNavigate }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entity, setEntity] = useState<ResolvedEntity | null>(null);
@@ -131,6 +134,12 @@ export function EntityPage({ query, roles, onSourceClick }: Props) {
 
       {/* Current state synthesis (only renders if there's enough signal) */}
       <CurrentState facts={facts} onSourceClick={onSourceClick} />
+
+      {/* 1-hop local graph derived from facts whose value is another
+          entity_id. Clicking a neighbor navigates to that entity. */}
+      {onNavigate && (
+        <EntityGraph entity={entity} facts={facts} onNavigate={onNavigate} />
+      )}
 
       {/* Facts: timeline or by-type view */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">

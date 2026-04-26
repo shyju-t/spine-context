@@ -82,6 +82,9 @@ export default function App() {
                 onSourceClick={(id, highlight) =>
                   setOpenSource({ id, highlight })
                 }
+                onNavigate={(entityId) =>
+                  setView({ kind: "entity", query: entityId })
+                }
               />
             )}
             {view.kind === "conflicts" && (
