@@ -1,0 +1,50 @@
+# What `gcloud builds submit` should NOT upload to Cloud Build.
+#
+# Without this file, gcloud falls back to .gitignore, which excludes
+# data/spine.db (correctly — the DB shouldn't be in git). But the
+# Dockerfile NEEDS data/spine.db in the build context to bake it into
+# the image. This file overrides the gitignore-derived behaviour.
+#
+# Rules of thumb:
+#   - keep node_modules out (huge, rebuilt by npm install in the image)
+#   - keep .git out (irrelevant at runtime)
+#   - keep ad-hoc dev probes / training data / extractor cache out
+#   - DELIBERATELY include data/spine.db (the demo state)
+
+node_modules
+**/node_modules
+.git
+.gitignore
+
+# Source data + extractor cache: not needed at runtime.
+data/enterprise-bench
+data/cache
+data/training
+
+# Snapshots and broken DB siblings (don't ship them).
+data/spine.db-*
+data/qontext.db
+data/qontext.db-*
+
+# Local env (never bake into image — keys ride via --set-env-vars at deploy time).
+.env
+.env.local
+.env.local.example
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+
+# Tests + ad-hoc probes that aren't part of the runtime
+test-pioneer-*.mjs
+test-gemini.mjs
+spine-counts.mjs
+peek-hero.mjs
+find-pioneer-rich.mjs
+find-demo-entities.mjs
+check-role-gradient.mjs
+
+# Build artifacts (we rebuild inside the image)
+apps/web/dist
+dist
