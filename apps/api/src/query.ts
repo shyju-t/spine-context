@@ -90,6 +90,27 @@ export async function findEntityByQuery(
     }
   }
 
+  // Pass 1b: typed-id field match. Each registry node carries its
+  // domain-native id (product_id like 'B07JW9H4J1', customer_id like
+  // 'hungc', client_id, vendor_id, emp_id) — users naturally search by
+  // those, not by our internal '<type>/<id>' canonical form.
+  const idFieldTables: Array<{ label: EntityType; field: string }> = [
+    { label: "Product", field: "product_id" },
+    { label: "Customer", field: "customer_id" },
+    { label: "Client", field: "client_id" },
+    { label: "Vendor", field: "vendor_id" },
+    { label: "Person", field: "emp_id" },
+  ];
+  for (const { label, field } of idFieldTables) {
+    const rows = await graph.query<{ id: string; name: string }>(
+      `MATCH (n:${label} {${field}: $v}) RETURN n.id AS id, n.name AS name LIMIT 1`,
+      { v: q },
+    );
+    if (rows.length > 0) {
+      return { id: rows[0].id, type: label, name: rows[0].name, match: "id" };
+    }
+  }
+
   // Pass 2: case-insensitive name match. Run per type until we find one.
   // (Could parallelize but single-writer Kuzu makes serial fine.)
   const lowerQ = q.toLowerCase();

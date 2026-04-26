@@ -19,7 +19,12 @@ const ROLE_PROFILES: { id: string; label: string; roles: string[] }[] = [
   {
     id: "cs",
     label: "CS Agent",
-    roles: ["employee:all", "role:customer_support"],
+    roles: ["employee:all", "role:cs"],
+  },
+  {
+    id: "sales",
+    label: "Sales",
+    roles: ["employee:all", "role:sales", "role:cs"],
   },
   {
     id: "hr",
@@ -29,7 +34,14 @@ const ROLE_PROFILES: { id: string; label: string; roles: string[] }[] = [
   {
     id: "exec",
     label: "Executive",
-    roles: ["employee:all", "role:hr", "role:exec"],
+    roles: [
+      "employee:all",
+      "role:hr",
+      "role:exec",
+      "role:cs",
+      "role:sales",
+      "role:engineering",
+    ],
   },
 ];
 
