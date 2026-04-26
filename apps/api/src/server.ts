@@ -8,8 +8,10 @@
  *   /api/entity?q=Ravi+Kumar&as_role=employee:all,role:hr
  *   /api/source/email/abc?as_role=role:exec
  */
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -331,6 +333,43 @@ app.post("/api/conflicts/resolve", async (c) => {
   });
   return c.json(result);
 });
+
+// ───────────────── Static frontend (production deploy) ─────────────────
+//
+// In dev the Vite server runs on port 5173 and proxies /api → here.
+// In the Cloud Run image we bake the built frontend into apps/web/dist
+// and let Hono serve it as static files. /api/* and /mcp are registered
+// above so they win — anything else falls through to serveStatic, which
+// serves index.html for / and the hashed assets for /assets/*. SPA
+// fallback: any unknown path returns index.html so direct-URL access
+// (e.g. /conflicts) still loads the app and lets client state route.
+
+const staticDirEnv = process.env.SPINE_STATIC_DIR;
+if (staticDirEnv) {
+  const staticDir = resolve(staticDirEnv);
+  if (existsSync(staticDir)) {
+    // serveStatic() expects a path relative to CWD. Keep it simple by
+    // using the resolved absolute prefix via rewriteRequestPath — that
+    // way SPINE_STATIC_DIR can be either relative or absolute.
+    app.use(
+      "/*",
+      serveStatic({
+        root: ".",
+        rewriteRequestPath: (path) => `${staticDir}${path}`,
+      }),
+    );
+    const indexHtml = join(staticDir, "index.html");
+    if (existsSync(indexHtml)) {
+      const html = readFileSync(indexHtml, "utf8");
+      app.get("*", (c) => c.html(html));
+    }
+    console.log(`             web:  serving ${staticDir} on /`);
+  } else {
+    console.warn(
+      `[spine-api] SPINE_STATIC_DIR=${staticDir} does not exist; static frontend NOT mounted`,
+    );
+  }
+}
 
 console.log(`[spine-api] listening on http://localhost:${port}`);
 console.log(`             db:  ${dbPath}`);

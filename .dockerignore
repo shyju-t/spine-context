@@ -1,0 +1,50 @@
+# Anything not needed inside the build context. We deliberately
+# DO include data/spine.db (it's the demo state). We exclude the
+# enterprise-bench raw dataset and the extractor cache — both are
+# only needed during ingestion/extraction, not at runtime.
+
+node_modules
+**/node_modules
+.git
+.gitignore
+
+# Snapshots and broken DB siblings — the .gitignore pattern catches
+# them in git, but they could still inflate the build context.
+data/spine.db-*
+data/qontext.db
+data/qontext.db-*
+
+# Source data + extractor cache: not needed at runtime.
+data/enterprise-bench
+data/cache
+data/training
+
+# Local env (secrets ride via --set-env-vars at deploy time).
+.env
+.env.local
+.env.local.example
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+
+# Tests + ad-hoc probes that aren't part of the runtime
+test-pioneer-*.mjs
+test-gemini.mjs
+spine-counts.mjs
+peek-hero.mjs
+find-pioneer-rich.mjs
+find-demo-entities.mjs
+check-role-gradient.mjs
+
+# Build artifacts (we rebuild inside the image)
+apps/web/dist
+dist
+
+# Docs / planning that don't affect runtime
+*.md
+DEFERRED.md
+USE_CASES.md
+PROJECT_BRIEF.md
+STATE.md
