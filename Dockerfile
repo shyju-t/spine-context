@@ -9,14 +9,23 @@
 # (~200MB, varies). Cold start ~5–10s; set --min-instances=1 if you
 # need hot.
 #
-# IMPORTANT: build this in an amd64 environment (Cloud Build does
-# this by default). The kuzu native binding is arch-specific, so
-# building on Apple Silicon and pushing direct to Cloud Run will
-# fail at runtime. Use `gcloud builds submit` (per deploy.sh) or
-# `docker buildx build --platform=linux/amd64`.
+# IMPORTANT — two arch concerns:
+#
+# 1. amd64 only. Build in an amd64 environment (Cloud Build does this
+#    by default). The kuzu native binding is arch-specific, so building
+#    on Apple Silicon and pushing direct to Cloud Run will fail at
+#    runtime. Use `gcloud builds submit` (per deploy.sh) or
+#    `docker buildx build --platform=linux/amd64`.
+#
+# 2. glibc, not musl. We use node:20-slim (Debian) NOT node:20-alpine.
+#    Kuzu's prebuilt native binary requires glibc 2.17+. Alpine uses
+#    musl libc; the container would import kuzu, fail silently in the
+#    require() chain, never bind the port, and Cloud Run would kill
+#    the revision after the startup timeout. Don't switch back to
+#    Alpine without a known-good musl build of kuzu.
 
 # ──────────────── Stage 1: build the Vite frontend ────────────────
-FROM node:20-alpine AS frontend-build
+FROM node:20-slim AS frontend-build
 
 WORKDIR /app
 
@@ -43,7 +52,7 @@ RUN npm run -w @spine/web build
 
 
 # ──────────────── Stage 2: runtime ────────────────
-FROM node:20-alpine AS runtime
+FROM node:20-slim AS runtime
 
 WORKDIR /app
 
@@ -61,6 +70,13 @@ COPY packages/resolver/package.json packages/resolver/
 COPY packages/extractor/package.json packages/extractor/
 COPY packages/adapters/package.json packages/adapters/
 RUN npm install --include-workspace-root --no-audit --no-fund
+
+# Build-time sanity: load the kuzu native binding now so an arch /
+# libc mismatch fails the build instead of failing the Cloud Run
+# health check 90 seconds into a deploy. If this throws, the binary
+# does not match the runtime — usually means we're on Alpine again
+# or the host is not amd64.
+RUN node -e "require('kuzu'); console.log('kuzu loads OK')"
 
 # Server source.
 COPY apps/api apps/api
