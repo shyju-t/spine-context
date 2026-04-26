@@ -9,7 +9,7 @@
  *   /api/source/email/abc?as_role=role:exec
  */
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
@@ -348,22 +348,24 @@ const staticDirEnv = process.env.SPINE_STATIC_DIR;
 if (staticDirEnv) {
   const staticDir = resolve(staticDirEnv);
   if (existsSync(staticDir)) {
-    // serveStatic() expects a path relative to CWD. Keep it simple by
-    // using the resolved absolute prefix via rewriteRequestPath — that
-    // way SPINE_STATIC_DIR can be either relative or absolute.
+    // serveStatic() requires `root` to be a path RELATIVE to CWD.
+    // Absolute paths are explicitly unsupported (the previous attempt
+    // used rewriteRequestPath as a workaround, which broke asset
+    // serving — /assets/index-abc.js 404'd, so the HTML loaded but
+    // the React bundle didn't, hence the blank page).
+    const relRoot = relative(process.cwd(), staticDir) || ".";
     app.use(
       "/*",
-      serveStatic({
-        root: ".",
-        rewriteRequestPath: (path) => `${staticDir}${path}`,
-      }),
+      serveStatic({ root: relRoot, index: "index.html" }),
     );
+    // SPA fallback for unknown paths (direct-URL access to /conflicts
+    // etc.). serveStatic calls next() on miss, so this catch-all runs.
     const indexHtml = join(staticDir, "index.html");
     if (existsSync(indexHtml)) {
       const html = readFileSync(indexHtml, "utf8");
       app.get("*", (c) => c.html(html));
     }
-    console.log(`             web:  serving ${staticDir} on /`);
+    console.log(`             web:  serving ${staticDir} (root=${relRoot})`);
   } else {
     console.warn(
       `[spine-api] SPINE_STATIC_DIR=${staticDir} does not exist; static frontend NOT mounted`,
