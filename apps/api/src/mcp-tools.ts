@@ -33,15 +33,25 @@ const TextContent = (text: string) =>
  *
  * The canonical form is preserved when callers already namespace; aliasing
  * only kicks in for known bare names.
+ *
+ * One additional ergonomic: any role-prefixed tag implies `employee:all`.
+ * In the UI, every role profile (Engineer, CS, HR, Exec, Sales) bundles
+ * employee:all alongside the specific role — because anyone with an
+ * elevated role still sees everything employees see. MCP callers tend to
+ * pass just the elevated role ('I'm acting as role:exec') and would
+ * otherwise miss employee-visible facts (reviews, internal posts, etc).
+ * We mirror the UI behaviour here so the two surfaces stay equivalent.
  */
 function normalizeRoles(input: string[] | undefined): string[] {
   const raw = input && input.length > 0 ? input : ["employee:all"];
   const out = new Set<string>();
+  let sawElevated = false;
   for (const r of raw) {
     const t = r.trim();
     if (!t) continue;
     if (t.includes(":")) {
       out.add(t);
+      if (t.startsWith("role:") || t.startsWith("person:")) sawElevated = true;
       continue;
     }
     const lower = t.toLowerCase();
@@ -51,7 +61,12 @@ function normalizeRoles(input: string[] | undefined): string[] {
     }
     // Bare role name → role:<name>. Covers "exec", "hr", "cs", "engineer", etc.
     out.add(`role:${lower}`);
+    sawElevated = true;
   }
+  // If the caller passed an elevated role but didn't include employee:all,
+  // add it. This is what the Inspector UI's role profiles do; the MCP
+  // surface should behave the same way for consistent demos.
+  if (sawElevated) out.add("employee:all");
   return [...out];
 }
 
