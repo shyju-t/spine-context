@@ -33,8 +33,11 @@ const dbPath =
   process.env.SPINE_DB ?? join(baseDir, "data/spine.db");
 const port = Number(process.env.SPINE_PORT ?? 3001);
 
+console.log(`[boot] opening kuzu DB at ${dbPath}`);
 const graph = new Graph(dbPath);
+console.log("[boot] running graph.init() (DDL pass)");
 await graph.init();
+console.log("[boot] graph.init() complete");
 
 // ───────────────── HTTP app ─────────────────
 
@@ -344,34 +347,45 @@ app.post("/api/conflicts/resolve", async (c) => {
 // fallback: any unknown path returns index.html so direct-URL access
 // (e.g. /conflicts) still loads the app and lets client state route.
 
+// Defensive boot: log progress, wrap each registration so any error
+// surfaces in Cloud Run logs instead of crashing silently.
+console.log("[boot] static-serve registration begins");
 const staticDirEnv = process.env.SPINE_STATIC_DIR;
 if (staticDirEnv) {
-  const staticDir = resolve(staticDirEnv);
-  if (existsSync(staticDir)) {
-    // serveStatic() requires `root` to be a path RELATIVE to CWD.
-    // Absolute paths are explicitly unsupported (the previous attempt
-    // used rewriteRequestPath as a workaround, which broke asset
-    // serving — /assets/index-abc.js 404'd, so the HTML loaded but
-    // the React bundle didn't, hence the blank page).
-    const relRoot = relative(process.cwd(), staticDir) || ".";
-    app.use(
-      "/*",
-      serveStatic({ root: relRoot, index: "index.html" }),
-    );
-    // SPA fallback for unknown paths (direct-URL access to /conflicts
-    // etc.). serveStatic calls next() on miss, so this catch-all runs.
-    const indexHtml = join(staticDir, "index.html");
-    if (existsSync(indexHtml)) {
-      const html = readFileSync(indexHtml, "utf8");
-      app.get("*", (c) => c.html(html));
+  try {
+    const staticDir = resolve(staticDirEnv);
+    if (existsSync(staticDir)) {
+      const indexPath = join(staticDir, "index.html");
+      const indexHtml = existsSync(indexPath)
+        ? readFileSync(indexPath, "utf8")
+        : null;
+      const relRoot = relative(process.cwd(), staticDir) || ".";
+
+      // Asset middleware — serveStatic with no `index` option (some
+      // versions don't honour it the way we expect; the SPA-fallback
+      // routes below handle the index.html serving explicitly).
+      app.use("/*", serveStatic({ root: relRoot }));
+
+      // Explicit / and * routes for index.html — serves the React app
+      // for the root and falls back for any unknown path so direct-URL
+      // access (e.g. /conflicts) loads the SPA cleanly.
+      if (indexHtml) {
+        app.get("/", (c) => c.html(indexHtml));
+        app.get("*", (c) => c.html(indexHtml));
+      }
+      console.log(
+        `[boot] web: serving ${staticDir} (root=${relRoot}, index=${indexHtml ? "yes" : "no"})`,
+      );
+    } else {
+      console.warn(
+        `[boot] SPINE_STATIC_DIR=${staticDir} does not exist; static frontend NOT mounted`,
+      );
     }
-    console.log(`             web:  serving ${staticDir} (root=${relRoot})`);
-  } else {
-    console.warn(
-      `[spine-api] SPINE_STATIC_DIR=${staticDir} does not exist; static frontend NOT mounted`,
-    );
+  } catch (err) {
+    console.error("[boot] static-serve registration FAILED:", err);
   }
 }
+console.log("[boot] static-serve registration done");
 
 // Bind to all interfaces (0.0.0.0) — Cloud Run requires this; the
 // container's port is otherwise unreachable from outside its
