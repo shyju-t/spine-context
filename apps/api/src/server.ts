@@ -371,8 +371,12 @@ if (staticDirEnv) {
   }
 }
 
-console.log(`[spine-api] listening on http://localhost:${port}`);
+// Bind to all interfaces (0.0.0.0) — Cloud Run requires this; the
+// container's port is otherwise unreachable from outside its
+// loopback. Local dev is unaffected; localhost still resolves.
+const hostname = "0.0.0.0";
+console.log(`[spine-api] listening on http://${hostname}:${port}`);
 console.log(`             db:  ${dbPath}`);
-console.log(`             rest: http://localhost:${port}/api/*`);
-console.log(`             mcp:  http://localhost:${port}/mcp`);
-serve({ fetch: app.fetch, port });
+console.log(`             rest: http://${hostname}:${port}/api/*`);
+console.log(`             mcp:  http://${hostname}:${port}/mcp`);
+serve({ fetch: app.fetch, port, hostname });
