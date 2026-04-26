@@ -210,6 +210,73 @@ app.get("/api/stats", async (c) => {
     sources_by_type = {};
   }
 
+  // LLM extraction coverage per source type. Counts distinct sources
+  // that have at least one extractor:* fact, broken down by which
+  // extractor authored it. Lets the demo answer "how much of each
+  // source pile has the LLM actually walked over?" without resorting
+  // to ad-hoc DB probes.
+  type CoverageRow = {
+    source_type: string;
+    extractor: string;
+    sources_extracted: bigint | number;
+    facts_authored: bigint | number;
+  };
+  const extractor_coverage: Record<
+    string,
+    { extracted_sources: number; by_extractor: Record<string, { sources: number; facts: number }> }
+  > = {};
+  try {
+    const rows = await graph.query<CoverageRow>(`
+      MATCH (f:Fact), (s:Source)
+      WHERE f.source_id = s.id AND f.author STARTS WITH 'extractor:'
+      RETURN s.type AS source_type,
+             f.author AS extractor,
+             count(DISTINCT s.id) AS sources_extracted,
+             count(f) AS facts_authored
+    `);
+    for (const r of rows) {
+      const sourceCount =
+        typeof r.sources_extracted === "bigint"
+          ? Number(r.sources_extracted)
+          : Number(r.sources_extracted ?? 0);
+      const factCount =
+        typeof r.facts_authored === "bigint"
+          ? Number(r.facts_authored)
+          : Number(r.facts_authored ?? 0);
+      const tag = r.extractor.replace(/^extractor:/, "");
+      if (!extractor_coverage[r.source_type]) {
+        extractor_coverage[r.source_type] = {
+          extracted_sources: 0,
+          by_extractor: {},
+        };
+      }
+      extractor_coverage[r.source_type].by_extractor[tag] = {
+        sources: sourceCount,
+        facts: factCount,
+      };
+    }
+    // Compute extracted_sources (distinct, across all extractors) per type.
+    // The aggregate above gives per-(type, extractor) distinct counts, so
+    // a single source extracted by both Gemini and Pioneer would be
+    // counted twice if we just summed. Re-query for the distinct total.
+    const totalRows = await graph.query<{
+      source_type: string;
+      total: bigint | number;
+    }>(`
+      MATCH (f:Fact), (s:Source)
+      WHERE f.source_id = s.id AND f.author STARTS WITH 'extractor:'
+      RETURN s.type AS source_type, count(DISTINCT s.id) AS total
+    `);
+    for (const r of totalRows) {
+      const v = typeof r.total === "bigint" ? Number(r.total) : Number(r.total ?? 0);
+      if (extractor_coverage[r.source_type]) {
+        extractor_coverage[r.source_type].extracted_sources = v;
+      }
+    }
+  } catch {
+    // Leave coverage empty on failure rather than failing the whole stats call.
+  }
+
   return c.json({
     sources,
     persons,
@@ -222,6 +289,7 @@ app.get("/api/stats", async (c) => {
     facts,
     entities: persons + customers + vendors + clients + products + topics + projects,
     sources_by_type,
+    extractor_coverage,
   });
 });
 
