@@ -39,11 +39,16 @@ export function EntityPage({ query, roles, onSourceClick }: Props) {
   const [redactedFacts, setRedactedFacts] = useState(0);
   const [redactedSources, setRedactedSources] = useState(0);
   const [view, setView] = useState<FactView>("timeline");
+  // Single-attribute filter (null = show all). Resets whenever the
+  // user navigates to a new entity so we don't carry "purchased"-only
+  // from a Customer page over to a Project page that doesn't have it.
+  const [attributeFilter, setAttributeFilter] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setAttributeFilter(null);
     getEntity(query, roles)
       .then((res) => {
         if (cancelled) return;
@@ -81,7 +86,25 @@ export function EntityPage({ query, roles, onSourceClick }: Props) {
     );
   }
 
-  const factsByType = groupBy(facts, (f) => f.type);
+  // Distinct attributes with counts, sorted by frequency. Used to
+  // render the chip filter row — the most-common attributes appear
+  // first so the relevant ones are easy to spot on dense entities
+  // (a Product with 200 sold_to + 80 reviewed_by + 5 owner facts
+  // surfaces those at the head of the strip).
+  const attributeCounts = (() => {
+    const m = new Map<string, number>();
+    for (const f of facts) m.set(f.attribute, (m.get(f.attribute) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  })();
+
+  // Apply the chip filter to the fact list before grouping/rendering.
+  // CurrentState below intentionally uses the unfiltered `facts` —
+  // synthesis should reflect the entity's full picture, not a slice.
+  const filteredFacts = attributeFilter
+    ? facts.filter((f) => f.attribute === attributeFilter)
+    : facts;
+
+  const factsByType = groupBy(filteredFacts, (f) => f.type);
 
   return (
     <div className="space-y-6">
@@ -113,7 +136,11 @@ export function EntityPage({ query, roles, onSourceClick }: Props) {
       <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
-            Facts ({facts.length})
+            Facts (
+            {attributeFilter
+              ? `${filteredFacts.length} of ${facts.length}`
+              : facts.length}
+            )
           </h2>
           <div className="flex rounded-md border border-slate-200 p-0.5 text-xs font-medium">
             <button
@@ -138,12 +165,47 @@ export function EntityPage({ query, roles, onSourceClick }: Props) {
             </button>
           </div>
         </div>
-        {facts.length === 0 ? (
+
+        {/* Attribute filter chips. Hidden on entities with only one attribute. */}
+        {attributeCounts.length > 1 && (
+          <div className="mb-4 flex flex-wrap gap-1.5 text-xs">
+            <button
+              onClick={() => setAttributeFilter(null)}
+              className={`rounded-full border px-2.5 py-0.5 transition-colors ${
+                attributeFilter === null
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              All ({facts.length})
+            </button>
+            {attributeCounts.map(([attr, count]) => (
+              <button
+                key={attr}
+                onClick={() =>
+                  setAttributeFilter(attributeFilter === attr ? null : attr)
+                }
+                className={`rounded-full border px-2.5 py-0.5 transition-colors ${
+                  attributeFilter === attr
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                }`}
+                title={`Show only ${attr} facts`}
+              >
+                {attr} ({count})
+              </button>
+            ))}
+          </div>
+        )}
+
+        {filteredFacts.length === 0 ? (
           <div className="text-sm text-slate-500">
-            No facts visible to your role.
+            {facts.length === 0
+              ? "No facts visible to your role."
+              : `No "${attributeFilter}" facts on this entity.`}
           </div>
         ) : view === "timeline" ? (
-          <Timeline facts={facts} onSourceClick={onSourceClick} />
+          <Timeline facts={filteredFacts} onSourceClick={onSourceClick} />
         ) : (
           <>
             {(["static", "trajectory", "procedural"] as const).map((t) => {
