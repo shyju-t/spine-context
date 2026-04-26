@@ -5,9 +5,32 @@ interface Props {
   onSourceClick: (source_id: string, highlight?: [number, number]) => void;
 }
 
+/**
+ * Source types whose subject carries a prose preview worth surfacing
+ * inline (review/sales summary lines, email subject, chat first line,
+ * KB question title, ticket issue snippet, post title). For these, a
+ * link-style row with the subject is far more useful than 'reviewed_by =
+ * customer/X' alone — the user actually wants to see *what* the review
+ * said. 'hr' is excluded — it has no narrative subject.
+ */
+const SUBJECT_PREVIEW_TYPES = new Set([
+  "review",
+  "support_chat",
+  "post",
+  "ticket",
+  "email",
+  "chat",
+  "kb",
+  "sales",
+]);
+
 export function FactRow({ fact, onSourceClick }: Props) {
   const aclTags = parseAcl(fact.acl);
   const isLLM = fact.author.startsWith("extractor:");
+  const showPreview =
+    !!fact.source_subject &&
+    fact.source_subject.trim().length > 0 &&
+    SUBJECT_PREVIEW_TYPES.has(fact.source_type);
   return (
     <div className="group flex items-start gap-3 border-b border-slate-100 py-2.5">
       <div className="w-44 shrink-0 text-sm font-medium text-slate-700">
@@ -15,6 +38,27 @@ export function FactRow({ fact, onSourceClick }: Props) {
       </div>
       <div className="flex-1 text-sm text-slate-900">
         <span className="break-words">{fact.value || <em className="text-slate-400">(empty)</em>}</span>
+        {showPreview && (
+          <button
+            type="button"
+            onClick={() =>
+              onSourceClick(
+                fact.source_id,
+                fact.source_span_start >= 0 && fact.source_span_end >= 0
+                  ? [fact.source_span_start, fact.source_span_end]
+                  : undefined,
+              )
+            }
+            className="mt-1 block w-full text-left text-xs italic leading-snug text-slate-600 hover:text-slate-900"
+            title="Open source"
+          >
+            “
+            {fact.source_subject.length > 220
+              ? fact.source_subject.slice(0, 220).trimEnd() + "…"
+              : fact.source_subject}
+            ”
+          </button>
+        )}
         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
           {fact.source_date && (
             <>
