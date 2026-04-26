@@ -3,3 +3,8 @@ export * from "./hr.js";
 export * from "./chat.js";
 export * from "./kb.js";
 export * from "./registries.js";
+export * from "./sales.js";
+export * from "./support-chat.js";
+export * from "./product-sentiment.js";
+export * from "./it-ticket.js";
+export * from "./post.js";

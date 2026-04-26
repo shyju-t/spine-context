@@ -12,6 +12,11 @@ import {
   loadVendors,
   rawEmployeeManagesEdges,
   rawEmployeeToPerson,
+  salesAdapter,
+  supportChatAdapter,
+  productSentimentAdapter,
+  itTicketAdapter,
+  postAdapter,
   type RawEmployee,
 } from "@spine/adapters";
 import { ingest } from "./pipeline.js";
@@ -22,7 +27,12 @@ type SourceFlag =
   | "hr"
   | "chat"
   | "kb"
-  | "registries";
+  | "registries"
+  | "sales"
+  | "support_chat"
+  | "review"
+  | "ticket"
+  | "post";
 
 interface CliArgs {
   data: string;
@@ -38,6 +48,11 @@ const VALID_SOURCES: SourceFlag[] = [
   "chat",
   "kb",
   "registries",
+  "sales",
+  "support_chat",
+  "review",
+  "ticket",
+  "post",
 ];
 
 function parseArgs(argv: string[]): CliArgs {
@@ -177,6 +192,67 @@ async function main() {
 
     console.log(
       `[registries] customers=${customers.length}, products=${products.length}, clients=${clients.length}, vendors=${vendors.length}`,
+    );
+  }
+
+  if (args.source === "sales" || args.source === "all") {
+    const stats = await ingest(
+      salesAdapter,
+      join(args.data, "Customer_Relation_Management/sales.json"),
+      { graph, limit: args.limit },
+    );
+    console.log(
+      `[sales] ingested ${stats.records} sources, ${stats.facts} facts, ${stats.errors} errors`,
+    );
+  }
+
+  if (args.source === "support_chat" || args.source === "all") {
+    const stats = await ingest(
+      supportChatAdapter,
+      join(
+        args.data,
+        "Customer_Relation_Management/Customer Support/customer_support_chats.json",
+      ),
+      { graph, limit: args.limit },
+    );
+    console.log(
+      `[support_chat] ingested ${stats.records} sources, ${stats.facts} facts, ${stats.errors} errors`,
+    );
+  }
+
+  if (args.source === "review" || args.source === "all") {
+    const stats = await ingest(
+      productSentimentAdapter,
+      join(
+        args.data,
+        "Customer_Relation_Management/Product Sentiment/product_sentiment.json",
+      ),
+      { graph, limit: args.limit },
+    );
+    console.log(
+      `[review] ingested ${stats.records} sources, ${stats.facts} facts, ${stats.errors} errors`,
+    );
+  }
+
+  if (args.source === "ticket" || args.source === "all") {
+    const stats = await ingest(
+      itTicketAdapter,
+      join(args.data, "IT_Service_Management/it_tickets.json"),
+      { graph, limit: args.limit },
+    );
+    console.log(
+      `[ticket] ingested ${stats.records} sources, ${stats.facts} facts, ${stats.errors} errors`,
+    );
+  }
+
+  if (args.source === "post" || args.source === "all") {
+    const stats = await ingest(
+      postAdapter,
+      join(args.data, "Enterprise Social Platform/posts.json"),
+      { graph, limit: args.limit },
+    );
+    console.log(
+      `[post] ingested ${stats.records} sources, ${stats.facts} facts, ${stats.errors} errors`,
     );
   }
 

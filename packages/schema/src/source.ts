@@ -11,6 +11,11 @@ export const SourceTypeSchema = z.enum([
   "kb",
   "ticket",
   "client",
+  // Wider EnterpriseBench coverage:
+  "sales", // structured purchase rows; no LLM
+  "support_chat", // CS agent ↔ customer transcripts; LLM
+  "review", // product sentiment reviews; LLM
+  "post", // internal enterprise social posts; LLM
 ]);
 export type SourceType = z.infer<typeof SourceTypeSchema>;
 
