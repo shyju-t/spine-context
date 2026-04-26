@@ -51,6 +51,9 @@ export interface GraphStats {
   projects: number;
   facts: number;
   entities: number;
+  /** Source count per type ('email', 'chat', 'review', etc). Server returns
+   * the entries in count-descending order. */
+  sources_by_type?: Record<string, number>;
 }
 
 export async function getStats(): Promise<GraphStats> {

@@ -191,6 +191,25 @@ app.get("/api/stats", async (c) => {
       count("Project"),
       count("Fact"),
     ]);
+
+  // Per-source-type breakdown so the landing page can show "we
+  // processed N emails, M chats, K reviews, etc." Best-effort: a
+  // failure here returns an empty record rather than failing the
+  // whole stats response.
+  let sources_by_type: Record<string, number> = {};
+  try {
+    const rows = await graph.query<{ type: string; total: bigint | number }>(
+      `MATCH (s:Source) RETURN s.type AS type, count(s) AS total ORDER BY total DESC`,
+    );
+    for (const r of rows) {
+      const v = r.total;
+      sources_by_type[r.type] =
+        typeof v === "bigint" ? Number(v) : (v ?? 0);
+    }
+  } catch {
+    sources_by_type = {};
+  }
+
   return c.json({
     sources,
     persons,
@@ -202,6 +221,7 @@ app.get("/api/stats", async (c) => {
     projects,
     facts,
     entities: persons + customers + vendors + clients + products + topics + projects,
+    sources_by_type,
   });
 });
 

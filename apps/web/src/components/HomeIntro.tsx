@@ -2,6 +2,66 @@ import { useEffect, useState } from "react";
 import { getStats, type GraphStats } from "../api";
 import StatsStrip from "./StatsStrip";
 
+/**
+ * Per-source-type breakdown shown under the StatsStrip.
+ * Renders one chip per source type with its count, sorted by the
+ * server's response order (count descending). Friendly labels map the
+ * internal type ('support_chat') to a more readable form ('Support Chats').
+ */
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  email: "Emails",
+  chat: "Internal Chats",
+  kb: "KB / Q&A",
+  hr: "HR Records",
+  sales: "Sales",
+  review: "Reviews",
+  support_chat: "Support Chats",
+  ticket: "IT Tickets",
+  post: "Social Posts",
+};
+
+function formatCount(n: number): string {
+  if (n >= 10000) {
+    const k = n / 1000;
+    return `${k.toFixed(1).replace(/\.0$/, "")}k`;
+  }
+  return n.toLocaleString("en-US");
+}
+
+function SourceBreakdown({
+  breakdown,
+}: {
+  breakdown?: Record<string, number>;
+}) {
+  if (!breakdown) return null;
+  const entries = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50/50 px-4 py-3">
+      <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500">
+        Sources processed by type
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {entries.map(([type, count]) => (
+          <span
+            key={type}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs"
+            title={`${count.toLocaleString("en-US")} ${type} sources`}
+          >
+            <span className="font-medium text-slate-700">
+              {SOURCE_TYPE_LABELS[type] ?? type}
+            </span>
+            <span className="font-mono text-slate-500 tabular-nums">
+              {formatCount(count)}
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   onSearch: (q: string) => void;
 }
@@ -77,14 +137,17 @@ export function HomeIntro({ onSearch }: Props) {
       </div>
 
       {/* ─── Stats strip (Lovable-generated component) ─── */}
-      <StatsStrip
-        stats={{
-          sources: stats?.sources ?? 0,
-          entities: stats?.entities ?? 0,
-          facts: stats?.facts ?? 0,
-          topics: stats?.topics ?? 0,
-        }}
-      />
+      <div className="space-y-3">
+        <StatsStrip
+          stats={{
+            sources: stats?.sources ?? 0,
+            entities: stats?.entities ?? 0,
+            facts: stats?.facts ?? 0,
+            topics: stats?.topics ?? 0,
+          }}
+        />
+        <SourceBreakdown breakdown={stats?.sources_by_type} />
+      </div>
 
 
       {/* ─── Suggestion tiles ─── */}
